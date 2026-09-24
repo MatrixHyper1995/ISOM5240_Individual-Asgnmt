@@ -573,7 +573,11 @@ def main() -> None:
     # 1. 预览相框（始终在最上方）
     render_preview_frame(st.session_state.image)
 
-    # 2. 故事卡片 + 播放器（生成后出现，位于相框下方）
+    # 2. 图片描述（读图后，紧跟在相框下方）
+    if st.session_state.description:
+        render_description(st.session_state.description)
+
+    # 3. 故事卡片 + 播放器（生成后出现，位于描述下方）
     if st.session_state.story:
         # 故事 / 音频解耦：改音色或语速只重跑 TTS，不重跑模型
         tts_key = (voice, rate)
@@ -589,22 +593,20 @@ def main() -> None:
         if st.session_state.audio:
             render_audio_player(st.session_state.audio)
 
-    # 3. 上传区（始终显示，生成后自然下移垫底）
-    uploaded = st.file_uploader(
-        "Upload an image",
-        type=ALLOWED_TYPES,
-        help="PNG / JPG / JPEG / BMP / TIFF · up to 12 MB",
-    )
+    # 4. 上传区 + 生成按钮（同一行，按钮垂直居中）
+    col_upload, col_btn = st.columns([3, 1], vertical_alignment="center")
+    with col_upload:
+        uploaded = st.file_uploader(
+            "Upload an image",
+            type=ALLOWED_TYPES,
+            help="PNG / JPG / JPEG / BMP / TIFF · up to 12 MB",
+        )
+    with col_btn:
+        button_label = "↻ Regenerate" if st.session_state.story else "✨ Generate Story"
+        generate_clicked = st.button(button_label, type="primary", use_container_width=True)
+
     if uploaded is not None and handle_upload(uploaded):
         st.rerun()  # 换图后立即重跑，避免残留旧内容
-
-    # 3.5 图片描述（读图后，文件框下方显示）
-    if st.session_state.description:
-        render_description(st.session_state.description)
-
-    # 4. 生成按钮（始终显示，生成后位于上传区下方）
-    button_label = "↻ Regenerate" if st.session_state.story else "✨ Generate Story"
-    generate_clicked = st.button(button_label, type="primary")
 
     if generate_clicked:
         if st.session_state.image is None:
@@ -632,6 +634,8 @@ def main() -> None:
                         if story_model["kind"] == "llm"
                         else f"Generation failed: {e}"
                     )
+                else:
+                    st.rerun()  # 生成成功后立即重跑，让故事和朗读直接显示
 
 
 if __name__ == "__main__":
