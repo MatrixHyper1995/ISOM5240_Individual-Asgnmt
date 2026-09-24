@@ -119,9 +119,9 @@ def extract_details(image: Image.Image) -> str:
     说明：此处按需加载模型、用完即释放（函数返回后局部变量被 GC），
     以避免 Cloud 1GB 内存同时容纳两个模型而 OOM。
     """
-    captioner = pipeline("image-to-text", model=CAPTION_MODEL)
+    captioner = pipeline("image-text-to-text", model=CAPTION_MODEL)
     try:
-        result = captioner(image)[0]["generated_text"]
+        result = captioner(image, text="A photo of")[0]["generated_text"]
         return result.strip()
     finally:
         del captioner
@@ -511,19 +511,19 @@ def main() -> None:
         st.header("⚙️ Settings")
 
         st.subheader("Generation")
-        mode = st.selectbox("Generation mode", GENERATION_MODES)
-        style_label = st.selectbox("Style", list(STORY_STYLES.keys()))
-        length_label = st.selectbox("Length", list(LENGTHS.keys()))
+        mode = st.selectbox("Generation mode", GENERATION_MODES, filter_mode=None)
+        style_label = st.selectbox("Style", list(STORY_STYLES.keys()), filter_mode=None)
+        length_label = st.selectbox("Length", list(LENGTHS.keys()), filter_mode=None)
 
         st.subheader("Voice")
-        voice_label = st.selectbox("Voice", list(VOICES.keys()))
-        speed_label = st.selectbox("Speed", list(SPEEDS.keys()))
+        voice_label = st.selectbox("Voice", list(VOICES.keys()), filter_mode=None)
+        speed_label = st.selectbox("Speed", list(SPEEDS.keys()), filter_mode=None)
 
         # LLM 选项：模型 + token（仅 LLM 模式使用）
         model_id = None
         hf_token = ""
         if mode == "LLM API":
-            model_id = MODEL_PRESETS[st.selectbox("Model", list(MODEL_PRESETS.keys()))]
+            model_id = MODEL_PRESETS[st.selectbox("Model", list(MODEL_PRESETS.keys()), filter_mode=None)]
             hf_token = st.text_input(
                 "HF Token",
                 value=st.secrets.get("HF_TOKEN", ""),
