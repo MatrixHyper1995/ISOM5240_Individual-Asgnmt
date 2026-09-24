@@ -2,7 +2,7 @@
 Image Storyteller — 上传图片 → 生成英文故事 → 朗读
 
 技术栈：
-  - 读图提取细节：Hugging Face Transformers pipeline("image-to-text")
+  - 读图提取细节：Hugging Face Transformers pipeline("image-text-to-text")
                     (Salesforce/blip-image-captioning-base)
   - 故事生成：     pipeline("text-generation") (distilgpt2)
   - 可选 LLM 方式：HF Inference API 远程调用 VLM
@@ -21,12 +21,12 @@ import io
 import edge_tts
 import streamlit as st
 from PIL import Image, ImageOps
-from transformers import pipeline, AutoProcessor, AutoModelForCausalLM, AutoTokenizer
+from transformers import pipeline
 
 # ============================================================================ #
 # 配置常量
 # ============================================================================ #
-CAPTION_MODEL = "microsoft/Florence-2-base"   # 读图（固定，出详细 caption）
+CAPTION_MODEL = "Salesforce/blip-image-captioning-base"   # 读图（固定，简洁 caption）
 HF_BASE_URL = "https://api-inference.huggingface.co/v1"    # LLM 远程端点
 
 MAX_IMAGE_SIZE = 1024        # 推理前图片长边上限
@@ -34,7 +34,7 @@ PREVIEW_SIZE = 800           # 相框预览图长边上限
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024   # 12MB 上传上限
 ALLOWED_TYPES = ["png", "jpg", "jpeg", "bmp", "tif", "tiff"]
 
-# 编故事模型（generation mode 只切换「编故事」模型，读图固定 Florence-2）
+# 编故事模型（generation mode 只切换「编故事」模型，读图固定 BLIP）
 STORY_MODELS = {
     "StorySupra-10M (local pipeline)": {"kind": "pipeline", "id": "SupraLabs/StorySupra-10M"},
     "distilgpt2 (local pipeline)": {"kind": "pipeline", "id": "distilgpt2"},
@@ -112,31 +112,16 @@ def image_to_base64(img: Image.Image, fmt: str = "JPEG", quality: int = 85) -> s
 # ============================================================================ #
 def extract_details(image: Image.Image) -> str:
     """
-    读图提取细节（Florence-2 官方 processor + model 用法）。
-    说明：transformers 5.x 的 Florence2Processor.__init__ 硬编码访问 tokenizer.image_token，
-    而 Florence-2 的 RobertaTokenizer 无此属性（报 RobertaTokenizer has no attribute image_token）。
-    故手动加载 tokenizer、补上 image_token / image_token_id（值 "<image>"，见 convert 脚本），再传给 processor。
+    读图提取描述（BLIP image-to-text pipeline，transformers 5.x 原生 image-text-to-text）。
+    比 Florence-2 更小更稳：pipeline 一行搞定，Cloud 1GB 内存 + CPU 也能跑。
+    用完即释放，避免和后续 story 模型叠加占用内存。
     """
-    tokenizer = AutoTokenizer.from_pretrained(CAPTION_MODEL)
-    if not hasattr(tokenizer, "image_token"):
-        tokenizer.image_token = "<image>"
-        tokenizer.image_token_id = tokenizer.convert_tokens_to_ids("<image>")
-    processor = AutoProcessor.from_pretrained(CAPTION_MODEL, tokenizer=tokenizer)
-    model = AutoModelForCausalLM.from_pretrained(CAPTION_MODEL)
+    captioner = pipeline("image-text-to-text", model=CAPTION_MODEL)
     try:
-        task = "<MORE_DETAILED_CAPTION>"
-        inputs = processor(text=task, images=image, return_tensors="pt")
-        generated_ids = model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
-            max_new_tokens=256,
-            num_beams=3,
-        )
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
-        parsed = processor.post_process_generation(generated_text, task=task, image_size=image.size)
-        return parsed[task].strip()
+        text = captioner(image, text="A photo of")[0]["generated_text"]
+        return text.strip()
     finally:
-        del model, processor, tokenizer
+        del captioner
         gc.collect()
 
 
