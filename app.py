@@ -25,24 +25,20 @@ from transformers import pipeline
 # ============================================================================ #
 # 配置常量
 # ============================================================================ #
-CAPTION_MODEL = "Salesforce/blip-image-captioning-base"   # 读图（pipeline 最稳）
-STORY_MODEL = "distilgpt2"                                 # 编故事（最省内存）
-HF_BASE_URL = "https://api-inference.huggingface.co/v1"    # LLM 选项的远程端点
+CAPTION_MODEL = "microsoft/Florence-2-base"   # 读图（固定，出详细 caption）
+HF_BASE_URL = "https://api-inference.huggingface.co/v1"    # LLM 远程端点
 
 MAX_IMAGE_SIZE = 1024        # 推理前图片长边上限
 PREVIEW_SIZE = 800           # 相框预览图长边上限
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024   # 12MB 上传上限
 ALLOWED_TYPES = ["png", "jpg", "jpeg", "bmp", "tif", "tiff"]
 
-# 生成方式（侧边栏）——默认 Pipeline（作业要求 transformers 主路径）
-GENERATION_MODES = ["Pipeline (default)", "LLM API"]
-
-# LLM 选项的候选 VLM（需 HF token）
-MODEL_PRESETS = {
-    "Qwen2.5-VL-7B-Instruct (recommended)": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "Qwen2-VL-7B-Instruct": "Qwen/Qwen2-VL-7B-Instruct",
-    "Llama-3.2-11B-Vision-Instruct (gated)": "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    "Pixtral-12B-2409 (gated)": "mistralai/Pixtral-12B-2409",
+# 编故事模型（generation mode 只切换「编故事」模型，读图固定 Florence-2）
+STORY_MODELS = {
+    "StorySupra-10M (local pipeline)": {"kind": "pipeline", "id": "SupraLabs/StorySupra-10M"},
+    "distilgpt2 (local pipeline)": {"kind": "pipeline", "id": "distilgpt2"},
+    "GLM-OCR (LLM API)": {"kind": "llm", "id": "zai-org/GLM-OCR"},
+    "Qwen2.5-VL-7B (LLM API)": {"kind": "llm", "id": "Qwen/Qwen2.5-VL-7B-Instruct"},
 }
 
 # 风格 / 长度 / 音色 / 语速
@@ -121,7 +117,7 @@ def extract_details(image: Image.Image) -> str:
     """
     captioner = pipeline("image-text-to-text", model=CAPTION_MODEL)
     try:
-        result = captioner(image, text="A photo of")[0]["generated_text"]
+        result = captioner(image, text="<MORE_DETAILED_CAPTION>")[0]["generated_text"]
         return result.strip()
     finally:
         del captioner
@@ -148,13 +144,13 @@ def trim_to_sentence_boundary(text: str, max_words: int) -> str:
     return truncated
 
 
-def generate_story_pipeline(details: str, style_desc: str, words: int) -> str:
+def generate_story_pipeline(details: str, style_desc: str, words: int, model_id: str) -> str:
     """
     基于图片细节生成英文故事（text-generation pipeline）。
     同样按需加载、用完释放。
     """
     prompt = build_story_prompt(details, style_desc, words)
-    generator = pipeline("text-generation", model=STORY_MODEL, pad_token_id=50256)
+    generator = pipeline("text-generation", model=model_id)
     try:
         out = generator(
             prompt,
@@ -163,6 +159,7 @@ def generate_story_pipeline(details: str, style_desc: str, words: int) -> str:
             do_sample=True,
             temperature=0.9,
             top_p=0.95,
+            pad_token_id=generator.tokenizer.eos_token_id,
         )
         full = out[0]["generated_text"]
         return full[len(prompt):].strip()
@@ -175,30 +172,20 @@ def generate_story_pipeline(details: str, style_desc: str, words: int) -> str:
 # 模型推理（LLM 远程 API 选项）
 # ============================================================================ #
 def generate_story_llm(
-    image_b64: str, model_id: str, style_desc: str, words: int, token: str
+    details: str, model_id: str, style_desc: str, words: int, token: str
 ) -> str:
-    """通过 HF Inference API（OpenAI 兼容）远程调用 VLM，一步生成故事。"""
+    """通过 HF Inference API（OpenAI 兼容）远程调用 LLM，基于图片细节编故事。"""
     from openai import OpenAI  # 延迟导入，仅在 LLM 模式需要
 
     client = OpenAI(base_url=HF_BASE_URL, api_key=token)
     prompt = (
-        f"Look at this image and write {style_desc} inspired by it, "
-        f"around {words} words. Write only the story itself in English."
+        f"Here is a detailed description of a scene: {details}. "
+        f"Write {style_desc} based on it, around {words} words. "
+        f"Write only the story itself in English."
     )
     resp = client.chat.completions.create(
         model=model_id,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
         max_tokens=512,
         temperature=0.85,
     )
@@ -223,19 +210,17 @@ def friendly_hf_error(e: Exception) -> str:
 
 def generate_story(
     image: Image.Image,
-    mode: str,
+    story_model: dict,
     style_desc: str,
     words: int,
-    model_id: str,
     token: str,
 ) -> str:
-    """故事生成编排器：按生成方式分发，并统一把故事裁剪到目标词数内的完整句子。"""
-    if mode == "LLM API":
-        img_small = resize_image(image, MAX_IMAGE_SIZE)
-        story = generate_story_llm(image_to_base64(img_small), model_id, style_desc, words, token)
+    """故事生成编排器：读图固定 Florence-2，编故事按所选模型分发，并统一裁剪到目标词数。"""
+    details = extract_details(image)  # 读图固定 Florence-2
+    if story_model["kind"] == "llm":
+        story = generate_story_llm(details, story_model["id"], style_desc, words, token)
     else:
-        details = extract_details(image)
-        story = generate_story_pipeline(details, style_desc, words)
+        story = generate_story_pipeline(details, style_desc, words, story_model["id"])
     return trim_to_sentence_boundary(story, words)
 
 
@@ -515,7 +500,7 @@ def main() -> None:
         st.header("⚙️ Settings")
 
         st.subheader("Generation")
-        mode = st.selectbox("Generation mode", GENERATION_MODES, filter_mode=None)
+        story_model_label = st.selectbox("Story model", list(STORY_MODELS.keys()), filter_mode=None)
         style_label = st.selectbox("Style", list(STORY_STYLES.keys()), filter_mode=None)
         length_label = st.selectbox("Length", list(LENGTHS.keys()), filter_mode=None)
 
@@ -523,11 +508,10 @@ def main() -> None:
         voice_label = st.selectbox("Voice", list(VOICES.keys()), filter_mode=None)
         speed_label = st.selectbox("Speed", list(SPEEDS.keys()), filter_mode=None)
 
-        # LLM 选项：模型 + token（仅 LLM 模式使用）
-        model_id = None
+        # HF Token（仅 LLM 类型模型需要）
+        story_model = STORY_MODELS[story_model_label]
         hf_token = ""
-        if mode == "LLM API":
-            model_id = MODEL_PRESETS[st.selectbox("Model", list(MODEL_PRESETS.keys()), filter_mode=None)]
+        if story_model["kind"] == "llm":
             hf_token = st.text_input(
                 "HF Token",
                 value=st.secrets.get("HF_TOKEN", ""),
@@ -579,24 +563,25 @@ def main() -> None:
     if generate_clicked:
         if st.session_state.image is None:
             st.error("Please upload an image first.")
-        elif mode == "LLM API" and not hf_token:
+        elif story_model["kind"] == "llm" and not hf_token:
             st.error("Please enter an HF Token in the sidebar.")
         else:
-            with st.spinner("Generating your story..."):
+            with st.status("✍️ Writing a story...", expanded=False) as status:
                 try:
                     st.session_state.story = generate_story(
                         st.session_state.image,
-                        mode,
+                        story_model,
                         style_desc,
                         words,
-                        model_id,
                         hf_token,
                     )
                     st.session_state.tts_key = None  # 强制重新合成
+                    status.update(label="✅ Story ready!", state="complete", expanded=False)
                 except Exception as e:
+                    status.update(label="Generation failed", state="error", expanded=True)
                     st.error(
                         friendly_hf_error(e)
-                        if mode == "LLM API"
+                        if story_model["kind"] == "llm"
                         else f"Generation failed: {e}"
                     )
 
