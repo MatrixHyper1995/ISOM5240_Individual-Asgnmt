@@ -34,7 +34,7 @@ PREVIEW_SIZE = 800           # 相框预览图长边上限
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024   # 12MB 上传上限
 ALLOWED_TYPES = ["png", "jpg", "jpeg", "bmp", "tif", "tiff"]
 
-# 生成方式（侧边栏）
+# 生成方式（侧边栏）——默认 Pipeline（作业要求 transformers 主路径）
 GENERATION_MODES = ["Pipeline (default)", "LLM API"]
 
 # LLM 选项的候选 VLM（需 HF token）
@@ -296,8 +296,7 @@ def inject_css() -> None:
         }
 
         /* ---- 按钮：扁平直角，hover 顶部高光 ---- */
-        .stApp div.stButton > button,
-        .stApp button[kind="primary"] {
+        [data-testid="stButton"] button {
             border-radius: 0 !important;
             border: none !important;
             background: #c7782e !important;
@@ -306,31 +305,36 @@ def inject_css() -> None:
             box-shadow: none !important;
             transition: background .25s ease, box-shadow .25s ease;
         }
-        .stApp div.stButton > button:hover,
-        .stApp button[kind="primary"]:hover {
+        [data-testid="stButton"] button:hover {
             background: #d5893c !important;
             box-shadow: inset 0 2px 0 rgba(255,255,255,.3), inset 0 -2px 0 rgba(0,0,0,.08) !important;
         }
 
-        /* ---- 输入框 / 下拉框：直角、无阴影 ---- */
-        .stApp [data-baseweb="select"] > div,
-        .stApp [data-baseweb="input"] > div,
-        .stApp [data-baseweb="base-input"] {
+        /* ---- 全局直角：按钮 / 下拉框 / 输入框 / 上传区内部所有元素 ---- */
+        [data-testid="stButton"] *,
+        [data-testid="stSelectbox"] *,
+        [data-testid="stTextInput"] *,
+        [data-testid="stFileUploader"] * {
             border-radius: 0 !important;
+        }
+        /* ---- 输入框 / 下拉框：无阴影、暖白底 ---- */
+        [data-testid="stSelectbox"] *,
+        [data-testid="stTextInput"] * {
             box-shadow: none !important;
+        }
+        [data-testid="stSelectbox"] input,
+        [data-testid="stTextInput"] input {
             background: #fffdf8 !important;
             border-color: rgba(110,86,58,.25) !important;
         }
 
         /* ---- 文件上传区：直角虚线框 + 毛玻璃 ---- */
         [data-testid="stFileUploader"] {
-            border-radius: 0 !important;
             background: rgba(255,251,242,.72) !important;
             backdrop-filter: blur(8px);
         }
         [data-testid="stFileUploader"] section {
             border: 1.5px dashed #c7782e !important;
-            border-radius: 0 !important;
         }
 
         /* ---- 暖色半透明相框（预览） ---- */

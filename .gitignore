@@ -1,0 +1,13 @@
+# Streamlit secrets（本地测试用，勿提交真实 token）
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
